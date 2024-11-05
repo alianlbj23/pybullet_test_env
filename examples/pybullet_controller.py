@@ -16,15 +16,17 @@ import pybullet as p
 import pybullet_data
 import numpy as np
 import time
-
+import os
 class RobotController:
     def __init__(self, robot_type = 'ur5', controllable_joints = None, end_eff_index = None, time_step = 1e-3):
         self.robot_type = robot_type
+        self.urdf_path = os.path.join(os.path.dirname(__file__), 'urdf2', 'target.urdf')
         self.robot_id = None
         self.num_joints = None
         self.controllable_joints = controllable_joints
         self.end_eff_index = end_eff_index
         self.time_step = time_step
+        self.previous_ee_position = None
     # function to initiate pybullet and engine and create world
     def createWorld(self, GUI=True, view_world=False):
         # load pybullet physics engine
@@ -43,7 +45,7 @@ class RobotController:
 
         #loading robot into the environment
         urdf_file = 'urdf/' + self.robot_type + '.urdf'
-        self.robot_id = p.loadURDF(urdf_file, useFixedBase=True)
+        self.robot_id = p.loadURDF(self.urdf_path, useFixedBase=True)
 
         self.num_joints = p.getNumJoints(self.robot_id) # Joints
         print('#Joints:',self.num_joints)
@@ -53,6 +55,11 @@ class RobotController:
         if self.end_eff_index is None:
             self.end_eff_index = self.controllable_joints[-1]
         print('#End-effector:', self.end_eff_index)
+        self.num_joints = p.getNumJoints(self.robot_id)
+        print(f'總關節數量: {self.num_joints}')
+        self.controllable_joints = list(range(1, self.num_joints - 1))
+        print(f'可控制的關節索引: {self.controllable_joints}')
+        print(f'需要提供的初始位置數量: {len(self.controllable_joints)}')
 
         if (view_world):
             while True:
@@ -80,7 +87,27 @@ class RobotController:
                                     velocityGains=[kv] * len(self.controllable_joints))
         for _ in range(100): # to settle the robot to its position
             p.stepSimulation()        
-
+    def markTarget(self, target_position):
+        # 使用紅色標記顯示目標位置
+        line_length = 0.1  # 調整標記大小
+        p.addUserDebugLine(
+            [target_position[0] - line_length, target_position[1], target_position[2]],
+            [target_position[0] + line_length, target_position[1], target_position[2]],
+            [1, 0, 0],  # 紅色
+            lineWidth=3
+        )
+        p.addUserDebugLine(
+            [target_position[0], target_position[1] - line_length, target_position[2]],
+            [target_position[0], target_position[1] + line_length, target_position[2]],
+            [1, 0, 0],
+            lineWidth=3
+        )
+        p.addUserDebugLine(
+            [target_position[0], target_position[1], target_position[2] - line_length],
+            [target_position[0], target_position[1], target_position[2] + line_length],
+            [1, 0, 0],
+            lineWidth=3
+        )
     # function to solve forward kinematics
     def solveForwardPositonKinematics(self, joint_pos):
         print('Forward position kinematics')
@@ -92,15 +119,75 @@ class RobotController:
         print('End-effector pose:', eePose)
         return eePose
 
+    def moveTowardsTarget(self, target_position, steps=50):
+        # 獲取當前末端執行器的位置
+        current_position = self.solveForwardPositonKinematics(self.getJointStates()[0])[0:3]
+        
+        # 計算每一步的位移向量
+        step_vector = (np.array(target_position) - np.array(current_position)) / steps
+        self.markTarget(target_position)
+        # 逐步靠近目標
+        for i in range(steps):
+            # 計算當前目標位置
+            intermediate_position = np.array(current_position) + (i + 1) * step_vector
+            # 計算 IK 解
+            joint_angles = self.solveInversePositionKinematics(intermediate_position)
+            
+            # 將當前關節角度應用到機器人
+            if joint_angles and len(joint_angles) >= len(self.controllable_joints):
+                self.setJointPosition(joint_angles[:len(self.controllable_joints)])
+                # self.markEndEffector()
+                time.sleep(0.1)  # 加入延遲觀察
+            else:
+                print("無法找到合適的解。")
+                break
+        input("Press Enter to end...")
     # function to solve inverse kinematics
     def solveInversePositionKinematics(self, end_eff_pose):
         print('Inverse position kinematics')
         joint_angles =  p.calculateInverseKinematics(self.robot_id,
                                                     self.end_eff_index,
-                                                    targetPosition=end_eff_pose[0:3],
-                                                    targetOrientation=p.getQuaternionFromEuler(end_eff_pose[3:6]))
+                                                    targetPosition=end_eff_pose[0:3])
+                                                    # targetOrientation=p.getQuaternionFromEuler(end_eff_pose[3:6]))
         print('Joint angles:', joint_angles)
+        # self.markTarget(end_eff_pose[0:3])
+        self.markEndEffectorPath()  # 標記末端執行器位置
         return joint_angles
+
+
+    def markEndEffector(self):
+        # 獲取末端執行器的位置
+        eeState = p.getLinkState(self.robot_id, self.end_eff_index)
+        ee_position = eeState[0]  # 末端執行器的位置
+
+        # 使用藍色點標記末端執行器位置
+        p.addUserDebugPoints(
+            position=ee_position,
+            color=[0, 0, 1],  # 藍色
+            size=0.05  # 點的大小
+        )
+    def markEndEffectorPath(self):
+        # 獲取當前末端執行器的位置
+        eeState = p.getLinkState(self.robot_id, self.end_eff_index)
+        ee_position = eeState[0]
+        
+        # 如果是第一個點，設置 previous_ee_position
+        if self.previous_ee_position is None:
+            self.previous_ee_position = ee_position
+        
+        # 繪製從上次位置到當前位置的線
+        p.addUserDebugLine(
+            self.previous_ee_position,
+            ee_position,
+            lineColorRGB=[0, 0, 1],  # 藍色
+            lineWidth=2
+        )
+        
+        # 更新 previous_ee_position 為當前位置
+        self.previous_ee_position = ee_position
+
+
+
 
     # function to get jacobian 
     def getJacobian(self, joint_pos):
