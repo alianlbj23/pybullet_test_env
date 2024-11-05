@@ -18,8 +18,9 @@ import numpy as np
 import time
 
 class RobotController:
-    def __init__(self, robot_type = 'ur5', controllable_joints = None, end_eff_index = None, time_step = 1e-3):
-        self.robot_type = robot_type
+    def __init__(self, controllable_joints = None, end_eff_index = None, time_step = 1e-3):
+        self.urdf_path = "./examples/urdf/target.urdf"
+        # self.robot_type = robot_type
         self.robot_id = None
         self.num_joints = None
         self.controllable_joints = controllable_joints
@@ -42,8 +43,9 @@ class RobotController:
         p.loadURDF("plane.urdf")
 
         #loading robot into the environment
-        urdf_file = 'urdf/' + self.robot_type + '.urdf'
-        self.robot_id = p.loadURDF(urdf_file, useFixedBase=True)
+        # urdf_file = 'urdf/' + self.robot_type + '.urdf'
+        # self.robot_id = p.loadURDF(urdf_file, useFixedBase=True)
+        self.robot_id = p.loadURDF(self.urdf_path, useFixedBase=True)
 
         self.num_joints = p.getNumJoints(self.robot_id) # Joints
         print('#Joints:',self.num_joints)
@@ -263,7 +265,7 @@ class RobotController:
                                         controlMode = p.TORQUE_CONTROL, 
                                         forces = tau)
             theta, _, _ = self.getJointStates()
-            print('n:{}::th:{}'.format(n,theta))
+            # print('n:{}::th:{}'.format(n,theta))
             
             p.stepSimulation()
             time.sleep(self.time_step)
